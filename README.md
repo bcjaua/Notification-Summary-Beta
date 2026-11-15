@@ -1,227 +1,148 @@
-# AI 智能通知助手（AI Notification Assistant）
+# AI 智能通知助手（Android / Kotlin / Compose）
 
-一个面向 Android 的本地通知整理工具。应用通过 Android 通知使用权读取设备通知，将通知保存在本地，并提供基于重要度的 AI 摘要能力。项目依据《AI 智能通知助手：技术实现方案》搭建。
+按《AI 智能通知助手：技术实现方案》实现的**可安装版本**：纯客户端、无后端，AI 使用用户自带的 OpenAI 兼容 / Anthropic 兼容 API。
 
-> **当前版本说明：** 本仓库是 MVP 开发工程，不代表 PDF 中列出的所有功能都已完成，也不是已经完成真机验收的正式发布版。请先构建并在自己的设备上测试，再用于日常通知管理。
+- 包名：`com.example.ainotification`
+- 最低系统：Android 10（API 29），目标 API 35
+- 版本：1.4.0（versionCode 5）
+- 安装包：`AI智能通知助手-v1.4.0.apk`（debug 签名，可直接安装自测）
 
-## 目录
+---
 
-- [项目目标](#项目目标)
-- [核心功能与当前状态](#核心功能与当前状态)
-- [技术栈](#技术栈)
-- [项目结构](#项目结构)
-- [运行环境](#运行环境)
-- [构建与运行](#构建与运行)
-- [首次使用](#首次使用)
-- [配置真实 AI 服务](#配置真实-ai-服务)
-- [通知处理与隐私](#通知处理与隐私)
-- [数据与安全说明](#数据与安全说明)
-- [已知限制与待完成事项](#已知限制与待完成事项)
-- [GitHub Actions 构建 APK](#github-actions-构建-apk)
-- [问题反馈与开发建议](#问题反馈与开发建议)
+## 1. 它做什么
 
-## 项目目标
+1. 通过 `NotificationListenerService` 监听系统通知，解析、过滤、去重后写入本地 Room 数据库。
+2. 点「立即生成摘要」（或累积 30 条自动触发），把待摘要通知交给 AI：
+   一次调用同时完成**事件合并 + 摘要 + 重要度分档**，返回固定 JSON。
+3. 本地完成**校验、排序、兜底**，再发布一条独立的摘要通知；原始通知不被取消、替换或隐藏。
+4. 点开摘要通知 → 摘要详情，每项可展开查看对应原始通知，实现来源追溯。
+5. 还支持：通知统计、对通知提问、按重要度或按应用排序、重要通知单独提醒。
 
-MVP 的核心使用流程：
+## 2. 功能对照（技术方案 → 实现）
 
-1. 用户授予通知使用权。
-2. 应用监听新通知，解析并保存到本地数据库。
-3. 用户点击“立即生成摘要”。
-4. 摘要模块将符合条件的通知交给 Fake AI 或用户配置的 OpenAI 兼容服务。
-5. 应用解析 AI 返回结果，校验来源编号并按重要度排序。
-6. 应用发布一条独立的 AI 摘要通知；原始通知不会被取消、替换或隐藏。
-
-AI 摘要的目标分档为 `high`、`medium`、`low`。同一事件可以合并多条通知，并通过来源关联保留回看原始通知的基础数据结构。
-
-## 核心功能与当前状态
-
-| 模块 | 当前工程状态 |
+| 方案要求 | 实现位置 |
 |---|---|
-| Android 原生单模块工程 | 已建立 |
-| Jetpack Compose / Material 3 界面 | 已建立基础页面 |
-| 通知监听服务 | 已有基础实现 |
-| 通知正文解析与内容哈希去重 | 已有基础实现 |
-| 常驻通知、组汇总通知过滤 | 已实现基础过滤 |
-| Room 数据模型 | 已建立通知、摘要、摘要项、来源关联、应用过滤等数据模型 |
-| Fake AI 摘要 | 已实现基础链路 |
-| OpenAI 兼容 Chat Completions | 已有基础请求实现，需配置并实测 |
-| 摘要 JSON 解析、来源编号校验与排序 | 已有基础实现 |
-| 固定 ID 摘要通知 | 已实现基础发布逻辑 |
-| 通知历史页面 | 已有基础页面 |
-| API Key 加密存储 | 已有 Android Keystore 相关实现 |
-| 每日清理任务 | 已有基础 Worker |
-| DataStore 配置持久化 | 尚未完整接入 |
-| 摘要详情及逐项原始通知追溯 UI | 尚未完成 |
-| 应用 ALLOW / BLOCK / NO_AI 管理界面 | 尚未完成 |
-| 通知累计 30 条自动触发 | 尚未完成 |
-| 每日 AI 调用次数上限 | 尚未完成 |
-| 网络失败重试及完整本地简版兜底 | 尚未完成 |
-| 完整诊断导出、隐私管理页面 | 尚未完成 |
-| 真机兼容性及 PDF 全部验收项 | 尚未完成 |
+| 单模块工程、按包分层 | `notification/`、`ai/`、`digest/`、`data/`、`worker/`、`ui/` |
+| UI：Material 3 + 可切换主题色（7 套 + 动态取色）+ 液态玻璃质感 | `ui/theme/`、`ui/components/LiquidGlass.kt`；半透明卡片、高光描边、导航栏玻璃、扫光动画 |
+| 首页模块化：摘要、重要通知、统计、通知类型、问 AI | `ui/home/HomeScreen.kt`（重要项卡、7 天柱状图、类型环形图、快捷提问） |
+| 统计页：类别占比 + 重要消息 | `ui/stats/StatsScreen.kt`（环形图占比、重要项标题与内容，可点进摘要） |
+| 摘要通知内容 | `digest/DigestPublisher.kt`：类型占比一行 + 重要消息「标题：内容」+ 另有 N 项 |
+| 底部导航：首页 / 通知 / 设置 | 统计与问 AI 从首页卡片进入，页面带返回 |
+| Room 五张表 | `data/Entities.kt`：notifications / digests / digest_items / digest_item_notification_ref / app_filters |
+| 去重：`(notificationKey, contentHash)` 唯一索引 | `NotificationEntity` 的 unique index + `OnConflictStrategy.IGNORE` |
+| 内容可用性 `FULL/TITLE_ONLY/EMPTY/HIDDEN` | `data/Enums.kt`、`NotificationParser` |
+| 摘要状态 `PENDING/DONE/SKIPPED` | `DigestStatus`，敏感/黑名单入库即 `SKIPPED` |
+| DataStore 保存 AI 配置与开关 | `data/SettingsRepository.kt` |
+| API Key 用 Android Keystore 加密 | `data/SecureKeyStore.kt`（AES-256-GCM） |
+| 通知监听、回调不联网 | `NotificationCaptureService`（解析与入库都在后台协程） |
+| 重绑与连接状态 | `onListenerDisconnected` → `requestRebind`；`ListenerState` 供首页展示 |
+| 过滤顺序：自身→常驻/媒体/下载→组汇总→黑名单→NO_AI/验证码→去重 | `NotificationFilter`、`NotificationRepository.store` |
+| 默认不发送：短信/银行/支付/密码管理 + 验证码 | `NotificationPrivacy.isSensitivePackage / looksLikeVerificationCode` |
+| 发送前脱敏：手机号/银行卡/邮箱 | `NotificationPrivacy.redact` |
+| AI 接口单一 `AIProvider` | `ai/AiModels.kt`；`FakeAIProvider`、`OpenAICompatibleProvider`、`AnthropicProvider` |
+| 多平台支持 | `ai/AiProviderType.kt`：OpenAI / DeepSeek / MiMo（小米）/ Claude / 自定义 OpenAI 兼容；`AiProviderFactory` 选择 |
+| 429/5xx 指数退避，401/404 不重试 | `ai/HttpTransport.kt`（最多 2 次重试） |
+| 7 步流水线 | `digest/DigestEngine` + `DigestInputBuilder`/`PromptBuilder`/`DigestValidator`/`DigestSorter` |
+| 单次 ≤40 条、每条 ≈200 字 | `DigestInputBuilder.MAX_BATCH/MAX_BODY_CHARS` |
+| 同一事件只概括成一条 | Prompt 规则 + `FakeAIProvider` 按「应用 + 会话标题」合并 |
+| 固定 JSON + 容错解析（去 ```json 围栏） | `ai/DigestParser` |
+| 校验：重要度归一、剔除无效编号、未覆盖编号→「其他 N 条」 | `digest/DigestValidator` |
+| 抽查：needsAction 但无硬信息 →「建议查看原文」 | `DigestValidator` + 详情页提示 |
+| 排序：重要度 → 需行动 → 最新时间；可按应用分组 | `digest/DigestSorter`（`DigestSortMode`） |
+| 两次失败 → 本地简版兜底（FALLBACK，保持 PENDING） | `DigestEngine.persistFallback` |
+| 事务写入摘要 + 关联表 + 标 DONE | `data/DigestRepository.persist`（`withTransaction`） |
+| WorkManager：唯一任务 + 网络约束 + 失败重试 3 次 | `worker/WorkScheduler`、`DigestWorker` |
+| 每日清理任务，默认保留 30 天 | `CleanupWorker` |
+| 暂停 AI 时任何触发直接跳过 | `DigestEngine` |
+| 摘要通知：专用渠道、固定 id、InboxStyle、无 high 时静默 | `digest/DigestPublisher` |
+| 重要通知单独提醒 | `DigestPublisher.alertImportant`（独立高优先级渠道 `ai_digest_important`） |
+| 摘要是否发通知可开关 | 通知设置「摘要通过通知发送」 |
+| 点击通知带 digestId 跳转详情 | `PendingIntent` → `MainActivity` → `Routes.digestDetail` |
+| 逐项展开来源，过期显示「原始通知已过期」 | `ui/digest/DigestDetailScreen.kt` |
+| 首页：监听状态、待处理数、最新摘要、立即生成、失败提示 | `ui/home/HomeScreen.kt` |
+| 引导：通知使用权 / 通知权限（onResume 重新检测；电池优化提示已隐藏） | 首页两步授权 + `LifecycleEventEffect(ON_RESUME)` |
+| 首次开启 AI 前说明并征得同意 | 首页 `AlertDialog` + `consentGiven` |
+| 新手教程 | `ui/onboarding/OnboardingScreen.kt`：5 页引导，内含权限申请、AI Key 填写、摘要呈现设置，全程可跳过；未完成时不显示「准备就绪」 |
+| 配置状态 | `ui/SetupStatus.kt` + 设置页「配置状态」卡片：可在设置里补完引导没做的项 |
+| 通知列表：按应用筛选 + 关键词 LIKE 搜索 | `ui/notifications/NotificationListScreen.kt` |
+| 通知详情：完整内容 + 可用性 + 所属摘要 | `ui/notifications/NotificationDetailScreen.kt` |
+| 通知统计：按天 / 应用 / 重要度 | `ui/stats/StatsScreen.kt` + `data/StatsRepository.kt`（全部本地 SQL 聚合） |
+| 通知问答 | `ui/ask/AskScreen.kt` + `ai/AskEngine.kt`（取最近 60 条做上下文） |
+| 设置：AI / 通知（白名单、黑名单、仅保存、保留期）/ 隐私 | `ui/settings/*` |
+| 清空数据二次确认 | 隐私设置 `AlertDialog` |
+| 导出诊断信息（不含通知内容） | 隐私设置「导出诊断信息」 |
+| 日志不输出正文与 Key | 全工程无正文日志；诊断信息仅数量与状态 |
 
-具体以仓库中的 [`PROJECT_STATUS.md`](PROJECT_STATUS.md) 为准。
+## 3. 构建
 
-## 技术栈
-
-- **语言：** Kotlin
-- **界面：** Jetpack Compose、Material 3
-- **本地数据：** Room
-- **偏好设置：** DataStore（依赖已配置，持久化尚未完整接入）
-- **网络：** OkHttp
-- **JSON：** kotlinx.serialization
-- **异步：** Kotlin Coroutines
-- **后台任务：** WorkManager
-- **密钥保护：** Android Keystore 相关加密存储
-- **构建：** Gradle、Android Gradle Plugin、KSP
-
-## 项目结构
-
-```text
-ai-notification-assistant/
-├── app/
-│   ├── build.gradle.kts
-│   └── src/main/
-│       ├── AndroidManifest.xml
-│       ├── res/
-│       └── java/com/example/ainotification/
-│           ├── AssistantApplication.kt
-│           ├── MainActivity.kt
-│           ├── ai/
-│           │   ├── AIRepository.kt
-│           │   └── DigestPublisher.kt
-│           ├── data/
-│           │   ├── Models.kt
-│           │   └── SecureKeyStore.kt
-│           ├── notification/
-│           │   └── NotificationCaptureService.kt
-│           ├── ui/
-│           └── worker/
-│               └── Workers.kt
-├── .github/workflows/android.yml
-├── build.gradle.kts
-├── gradle.properties
-├── settings.gradle.kts
-├── PROJECT_STATUS.md
-└── README.md
-```
-
-## 运行环境
-
-- Android Studio（建议使用当前稳定版）。
-- JDK 17。
-- Android SDK：项目配置 `compileSdk = 35`、`targetSdk = 35`。
-- 最低系统版本：Android 10（API 29）。
-- 首次构建需要网络下载 Gradle 插件和依赖。
-
-## 构建与运行
-
-### 使用 Android Studio
-
-1. 解压项目 ZIP。
-2. 在 Android Studio 中选择 **Open**，打开 `ai-notification-assistant` 项目根目录。
-3. 等待 Gradle Sync 完成；如果提示安装 Android SDK 35，请按提示安装。
-4. 连接 Android 设备并启用开发者选项与 USB 调试，或启动模拟器。
-5. 选择 `app` 运行配置并运行。
-
-也可以在项目根目录执行：
+环境：JDK 17 + Android SDK（platform 35、build-tools 34.0.0）。用 Android Studio 直接打开工程，或命令行：
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-Windows 命令行使用：
+产物：`app/build/outputs/apk/debug/app-debug.apk`。
 
-```powershell
-.\gradlew.bat :app:assembleDebug
+单元测试：
+
+```bash
+./gradlew :app:testDebugUnitTest
 ```
 
-成功后，Debug APK 通常位于：
+> `debug.keystore` 仅用于本地自测（口令 `android`，alias `androiddebugkey`）。正式分发请换成自己的签名。
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
+## 4. 安装与首次使用
+
+1. 安装 APK，首次打开进入 5 页新手引导：权限申请 → AI Key（可跳过）→ 摘要呈现设置 → 完成。每页都可以「跳过」，之后在设置里补。
+2. 若跳过了授权，首页会提示补授权：
+   - **通知使用权** → 系统「通知使用权」列表里勾选「AI 智能通知助手」；
+   - **发送通知权限**（Android 13+）。
+   国产系统建议在手机管家的「自启动管理」里手动允许（界面不再提示，应用也检测不到这项）。
+3. 让手机收到几条普通通知，首页会显示「待摘要 N 条」。
+4. 点「立即生成摘要」：
+   - 默认是 **Fake AI**，不联网，用来验证「解析 → 校验 → 排序 → 发布」全链路；
+   - 验证通过后到「设置 → AI」选择服务商（OpenAI / DeepSeek / MiMo / Claude / 自定义），填 Base URL、Model、API Key，点「测试连接」，再生成。
+5. 通知栏出现摘要（有重要项时还会单独提醒），点开进入摘要详情，可逐项展开来源通知。
+6. 「统计」页看 7 天趋势、应用分布、重要度分布；「问 AI」页可以直接问「今天有什么重要的事？」。
+
+## 5. 验收路径（对应方案第 13 节）
+
+| 步骤 | 验证方法 |
+|---|---|
+| 2 采集 | 真实通知入库；同一通知反复更新不产生重复行；本应用摘要通知不会出现在通知列表 |
+| 3 稳定性 | 首页显示监听状态；重启后能恢复；断开可点「重新绑定」 |
+| 4 FakeAI 链路 | 点按钮 → 出现摘要通知 → 点开看到来源通知 |
+| 5 真实 AI | 四家服务商任选其一配置后能生成；断网时不崩溃、不丢数据（任务 retry） |
+| 6 隐私 | 短信/验证码类不会出现在请求里；暂停 AI 后无任何请求 |
+| 7 自测 | 日常使用一周，观察摘要质量 |
+
+## 6. 隐私与安全说明
+
+- 数据只存在应用私有目录，`allowBackup=false`，`data_extraction_rules` 排除数据库与文件参与云备份。
+- API Key 由 Android Keystore 中的 AES 密钥加密，密钥不可导出；界面只显示末 4 位。
+- 发送给 AI 前先本地过滤（敏感应用、验证码、空正文）+ 脱敏（手机号、银行卡号、邮箱）。
+- 通知正文放在 `<notifications>` 标签，并在 system prompt 中声明为数据而非指令；重要度只依据内容本身。
+- 客户端无法防住设备被攻破后的数据提取，本应用不宣称绝对安全。
+
+## 7. 已知限制
+
+- 未在真机/模拟器上运行验证（构建环境无设备）；通知可用性、厂商后台策略需要实机确认。
+- 各服务商模型名会更新，默认值只是起点，请在设置里改成官方当前可用的模型名。
+- Claude 走 Anthropic Messages 协议，不支持 `response_format`，只靠 Prompt 约束输出，解析层已做容错。
+- MiMo 默认使用 `https://api.xiaomimimo.com/v1`（OpenAI 兼容），模型名以官方文档为准。
+- 通知问答的上下文取最近 60 条通知，暂不做向量检索；数据量很大时可后续换成 FTS/检索。
+- 定时摘要（PeriodicWorkRequest）、摘要详细程度分档属于 V1.0 之后的方向。
+
+## 8. 目录结构
+
 ```
-
-**注意：** 当前交付包未包含 Gradle Wrapper 可执行脚本及 Wrapper JAR。如果项目目录中没有 `gradlew` / `gradlew.bat`，请先在 Android Studio 中使用其 Gradle 集成构建，或补齐 Gradle Wrapper 后再执行上述命令。构建是否成功需以实际 Android Studio / CI 结果为准。
-
-## 首次使用
-
-1. 安装并打开应用。
-2. 在系统设置中进入“通知使用权”或“通知访问权限”，允许本应用读取通知。
-3. Android 13（API 33）及以上系统还需要授予通知发送权限，否则应用无法发布摘要通知。
-4. 返回应用，确认通知监听授权状态。
-5. 先使用 Fake AI 流程验证基本链路。
-6. 收到若干普通通知后，点击“立即生成摘要”。
-7. 检查应用是否发布 AI 摘要通知，并确认原始通知仍保留在系统通知栏中。
-
-不同 Android 厂商对后台运行的管理不同。若监听服务容易断开，请检查系统的电池优化、自启动和后台运行限制设置。
-
-## 配置真实 AI 服务
-
-当前工程包含 OpenAI 兼容 Chat Completions 的基础请求实现。使用真实服务前，请确认服务商提供兼容接口，并准备：
-
-- **Base URL：** 服务商 API 根地址。代码会在该地址基础上请求 `/chat/completions`；请按当前实现和服务商要求填写，避免重复拼接路径。
-- **Model：** 服务商支持的模型名称。
-- **API Key：** 对应服务商的密钥。
-- **网络：** 设备能够访问该 API 服务。
-
-使用前请检查应用中的 Fake AI 开关及配置项。真实 API 的请求会将符合筛选条件的通知内容发送到你配置的第三方服务。不要将 API Key 写入源码、提交到 Git 仓库或发送给他人。
-
-> 当前版本的配置持久化、连接测试、错误处理和重试能力尚未达到完整方案要求。请勿将当前实现视为对任意 OpenAI 兼容服务商均已验证。
-
-## 通知处理与隐私
-
-通知可能包含私人聊天、验证码、金融信息或其他敏感内容。当前工程包含基础的本地过滤和脱敏逻辑，设计目标包括：
-
-- 过滤本应用自身通知，避免摘要通知再次进入采集。
-- 过滤常驻通知和群组汇总通知。
-- 对部分短信、银行、支付、密码管理类应用及验证码特征进行默认跳过处理。
-- 对发送给 AI 的内容尝试替换手机号、银行卡号和邮箱等信息。
-- 不在日志中主动输出通知正文或 API Key。
-
-这些规则属于基础实现，不能保证识别所有敏感应用或所有敏感信息。用户应在真实 AI 模式开启前检查过滤逻辑，并避免将不希望离开设备的通知发送给第三方服务。
-
-## 数据与安全说明
-
-- 通知和摘要数据设计为保存在应用私有存储中。
-- API Key 使用 Android Keystore 相关加密机制保护。
-- 加密存储不等于绝对安全；设备被攻破、调试环境不安全或系统存在漏洞时，仍可能发生数据泄露。
-- 卸载应用或清除应用数据可能导致本地通知历史和配置丢失。
-- 请勿把真实通知内容、API Key 或个人数据加入公开 issue、日志或代码仓库。
-
-## 已知限制与待完成事项
-
-在将项目用于长期日常使用或发布前，建议至少完成：
-
-1. 完整接入 DataStore，持久化 Base URL、Model、超时、输出长度、Temperature 和相关开关。
-2. 完成摘要详情页，支持摘要项到原始通知的逐条来源追溯。
-3. 完成应用过滤管理，支持 `ALLOW`、`BLOCK`、`NO_AI`。
-4. 实现通知累计达到阈值后的自动摘要任务。
-5. 实现每日调用上限和调用用量记录。
-6. 补齐网络错误分类、重试、失败状态及本地简版摘要兜底。
-7. 完成首次启用 AI 的第三方数据发送告知与用户确认。
-8. 完成通知清理、摘要清理、清除全部数据等隐私管理操作。
-9. 在 Android 10 至当前目标版本及不同厂商设备上测试通知监听、权限撤销、后台回收和重启恢复。
-10. 按 PDF 第 13–14 页的验收步骤逐项测试并记录结果。
-
-## GitHub Actions 构建 APK
-
-项目包含 `.github/workflows/android.yml` 工作流。可按以下方式尝试云端构建：
-
-1. 在 GitHub 创建一个自己的仓库。
-2. 将本项目目录中的文件上传到仓库。
-3. 打开仓库的 **Actions** 页面，启用 GitHub Actions。
-4. 选择 **Android APK** 工作流并运行（如果工作流配置为 push 触发，则推送代码后会自动运行）。
-5. 打开对应运行记录，在 Artifacts 区域下载生成的 APK。
-
-云端构建能否成功取决于工作流配置、Gradle Wrapper、依赖下载和 Android 构建环境；请以 Actions 日志为准。
-
-## 问题反馈与开发建议
-
-提交问题时请提供：
-
-- Android 版本及设备型号（无需提供个人设备标识）。
-- 复现步骤。
-- 预期行为与实际行为。
-- 不包含通知正文、API Key 或其他私人内容的错误日志。
-
-建议按“通知采集 → Fake AI 摘要 → 摘要通知与来源追溯 → 真实 AI → 隐私与稳定性”的顺序开发和验收，先确保本地链路可靠，再扩展功能。
+app/src/main/java/com/example/ainotification/
+├── AssistantApplication.kt      # 手写 AppContainer（依赖装配）
+├── MainActivity.kt              # 单 Activity + 引导页 + 通知跳转
+├── ai/                          # 多平台 Provider、Prompt、解析、问答
+├── data/                        # Room 实体/DAO/数据库、DataStore、Keystore、统计
+├── digest/                      # 流水线：输入、校验、排序、发布、引擎
+├── notification/                # 监听服务、解析、过滤、隐私、仓库
+├── ui/                          # 首页、通知、统计、问 AI、设置、引导、详情
+└── worker/                      # 摘要 Worker、清理 Worker、调度
+```
