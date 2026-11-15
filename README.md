@@ -126,7 +126,7 @@
 
 ## 7. 已知限制
 
-- 未在真机/模拟器上运行验证（构建环境无设备）；通知可用性、厂商后台策略需要实机确认。
+- 通知可用性、厂商后台策略需要实机确认。
 - 各服务商模型名会更新，默认值只是起点，请在设置里改成官方当前可用的模型名。
 - Claude 走 Anthropic Messages 协议，不支持 `response_format`，只靠 Prompt 约束输出，解析层已做容错。
 - MiMo 默认使用 `https://api.xiaomimimo.com/v1`（OpenAI 兼容），模型名以官方文档为准。
@@ -146,3 +146,7 @@ app/src/main/java/com/example/ainotification/
 ├── ui/                          # 首页、通知、统计、问 AI、设置、引导、详情
 └── worker/                      # 摘要 Worker、清理 Worker、调度
 ```
+## 9.Beta版说明
+
+> 目前版本为最初测试版，代码大多数为AI构建，希望开发者们多多指正APP的不足，也可再次基础上随意更改，谢谢Thanks_(:з)∠)_。
+> Other languages might be added later,so please understand.(≧∇≦)ﾉ
